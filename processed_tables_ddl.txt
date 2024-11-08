@@ -1,0 +1,14 @@
+datamart_cod.tx_fido_oper_day
+datamart_risks.limit
+datamart_risks.crules_hit
+datamart_risks.scoring_model_monitoring
+datamart_risks.income_model_monitoring
+datamart_cod.tx_fido_reconcile
+datamart_risks.application
+datamart_risks.crules_dic
+datamart_cod.tx_turnover
+ods__asterisk.agents_timetable
+ods__fido.dwh_personal_accounts
+ods__fido_cod.day_operational_cod
+ods__jira.tickets_custex
+ods__ktc.overall_unavailable_reasons_p

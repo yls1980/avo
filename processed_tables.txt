@@ -1,0 +1,6 @@
+greenplum_dwh.ods.datamart_cod.datamart_cod__tx_fido_oper_day
+greenplum_dwh.ods.ods__fido_cod.ods__fido_cod__day_operational_cod
+greenplum_dwh.ods.ods__ktc.ods__ktc__overall_unavailable_reasons_p
+greenplum_dwh.ods.datamart_risks.datamart_risks__income_model_monitoring
+greenplum_dwh.ods.ods__asterisk.ods__asterisk__agents_timetable
+greenplum_dwh.ods.ods__jira.ods__jira__tickets_custex
