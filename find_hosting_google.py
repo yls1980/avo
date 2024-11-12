@@ -1,9 +1,10 @@
-import random
+from selenium import webdriver
+from selenium.webdriver.common.by import By
+from selenium.webdriver.chrome.service import Service
+from webdriver_manager.chrome import ChromeDriverManager
 import time
-
-import requests
-from bs4 import BeautifulSoup
-import urllib.parse
+import random
+import json
 
 countries_population = {
     "China": {"population": 1402, "domain": ".cn"},
@@ -118,67 +119,195 @@ countries_population = {
 }
 
 
-def google_query(query, domain, max_results):
+def duckduckgo_query(query, domain, max_results):
     full_query = f"{query} site:{domain}"
+    url = f"https://duckduckgo.com/?q={full_query}"
 
-    #url = f"https://www.google.com/search?q={urllib.parse.quote_plus(full_query)}"
-    url = f"https://duckduckgo.com/html/?q={urllib.parse.quote_plus(full_query)}"
-
-    user_agents = [
+    options = webdriver.ChromeOptions()
+    options.add_argument("--headless")  # Run in headless mode if desired
+    options.add_argument("--no-sandbox")
+    options.add_argument("--disable-dev-shm-usage")
+    options.add_argument("user-agent=" + random.choice([
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.5845.111 Safari/537.36",
         "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.5735.134 Safari/537.36",
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:89.0) Gecko/20100101 Firefox/89.0",
         "Mozilla/5.0 (iPhone; CPU iPhone OS 14_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.0 Mobile/15E148 Safari/604.1"
-    ]
+    ]))
 
-    headers = {
-        "User-Agent": random.choice(user_agents),
-        "Accept-Language": "en-US,en;q=0.9",
-        "Accept-Encoding": "gzip, deflate, br",
-        "Connection": "keep-alive",
-        "DNT": "1",  # Do Not Track Request Header
-        "Upgrade-Insecure-Requests": "1",
-        "Cache-Control": "no-cache",
-    }
+    driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
 
-    response = requests.get(url, headers=headers)
-    if response.status_code != 200:
-        print(f"Failed to retrieve results {url}")
-        time.sleep(random.uniform(5, 10))
-        return
+    driver.get(url)
+    time.sleep(2)  # Wait for the page to load
 
-    soup = BeautifulSoup(response.text, "html.parser")
+    results = driver.find_elements(By.CSS_SELECTOR, ".result__body")
 
-    results = soup.select(".tF2Cxc")
-
-    with open("google_results.html", "w", encoding="utf-8") as f:
-        # Write the HTML structure
-        f.write("<html><head><title>Google Search Results</title></head><body>")
-        f.write("<html><head><title>Google Search Results</title></head><body>")
+    with open("duckduckgo_results.html", "w", encoding="utf-8") as f:
+        f.write("<html><head><title>DuckDuckGo Search Results</title></head><body>")
         f.write(f"<h1>Results for '{query}' in {domain}</h1>")
 
         pages = 0
-        for idx, result in enumerate(results, start=1):
+        for idx, result in enumerate(results):
             if pages >= max_results:
                 break
-            title = result.select_one("h3").text if result.select_one("h3") else "No title"
-            print(title)
-            link = result.select_one("a")["href"]
-            snippet = result.select_one(".VwiC3b").text if result.select_one(".VwiC3b") else "No snippet"
-            try:
-                link_response = requests.head(link, timeout=5)
-                if link_response.status_code == 200:
-                    f.write(f"<h2>{idx}. {title}</h2>")
-                    f.write(f"<p><a href='{link}'>{link}</a></p>")
-                    f.write(f"<p>{snippet}</p><br>")
-                    pages += 1
-                else:
-                    accessibility = f"Not accessible (Status: {link_response.status_code})"
-            except requests.RequestException:
-                accessibility = "Not accessible (Request failed)"
 
-        f.write("</body></html>")
+            title_element = result.find_element(By.CSS_SELECTOR, ".result__a")
+            title = title_element.text
+            link = title_element.get_attribute("href")
+            snippet_element = result.find_element(By.CSS_SELECTOR, ".result__snippet")
+            snippet = snippet_element.text
+
+            try:
+                driver.execute_script("window.open('');")
+                driver.switch_to.window(driver.window_handles[1])
+                driver.get(link)
+                time.sleep(1)  # Wait for the link to load
+
+                accessibility = "Accessible"
+
+                driver.close()
+                driver.switch_to.window(driver.window_handles[0])
+
+                f.write(f"<h2>{idx + 1}. {title}</h2>")
+                f.write(f"<p><a href='{link}'>{link}</a></p>")
+                f.write(f"<p>{snippet}</p>")
+                f.write(f"<p><strong>Accessibility:</strong> {accessibility}</p><br>")
+                pages += 1
+            except Exception as e:
+                print(f"Failed to load {link}: {e}")
+                f.write(f"<h2>{idx + 1}. {title} (Link failed)</h2><br>")
+
+    f.write("</body></html>")
+    driver.quit()
+
+def initialize_driver():
+    """Initialize and return a new Chrome WebDriver instance with options."""
+    options = webdriver.ChromeOptions()
+    options.add_argument("--headless")
+    options.add_argument("--no-sandbox")
+    options.add_argument("--disable-dev-shm-usage")
+    options.add_argument("user-agent=" + random.choice([
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.5845.111 Safari/537.36",
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.5735.134 Safari/537.36",
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:89.0) Gecko/20100101 Firefox/89.0",
+        "Mozilla/5.0 (iPhone; CPU iPhone OS 14_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.0 Mobile/15E148 Safari/604.1"
+    ]))
+    return webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
+
+def country_link_count(country, output_file="google_links.json"):
+    try:
+        with open(output_file, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return sum(1 for entry in data if entry.get("country") == country)
+    except FileNotFoundError:
+        return 0
+
+
+def google_query(query, country, domain, max_results, output_file="google_links.json"):
+    full_query = f"{query} site:{domain}"
+    url = f"https://www.google.com/search?q={full_query}"
+
+    driver = initialize_driver()
+    new_data = []
+
+    try:
+        with open(output_file, "r", encoding="utf-8") as f:
+            existing_data = json.load(f)
+            checked_urls = {entry["link"] for entry in existing_data if entry.get("checked", False)}
+    except FileNotFoundError:
+        existing_data = []
+        checked_urls = set()
+
+    try:
+        driver.get(url)
+        time.sleep(2)
+        results = driver.find_elements(By.CSS_SELECTOR, ".tF2Cxc")
+
+        for idx, result in enumerate(results):
+            print(f'{country} - {idx}')
+            if idx >= max_results:
+                break
+
+            try:
+                title = result.find_element(By.CSS_SELECTOR, "h3").text or "No title"
+                link = result.find_element(By.CSS_SELECTOR, "a").get_attribute("href") or "No link"
+                snippet = result.find_element(By.CSS_SELECTOR, ".VwiC3b").text or "No snippet"
+
+                if link not in checked_urls:
+                    new_data.append({
+                        "country": country,
+                        "title": title,
+                        "link": link,
+                        "snippet": snippet,
+                        "checked": False
+                    })
+            except Exception as e:
+                print(f"Error processing result: {e}")
+
+    finally:
+        driver.quit()
+
+    all_links = {item["link"]: item for item in existing_data + new_data}
+    combined_data = list(all_links.values())
+
+    with open(output_file, "w", encoding="utf-8") as f:
+        json.dump(combined_data, f, ensure_ascii=False, indent=4)
+    print(f"Appended {len(new_data)} new links to {output_file}")
+
+
+def check_links(input_file="google_links.json", output_file="google_results.html"):
+    driver = initialize_driver()
+
+    try:
+        with open(input_file, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except FileNotFoundError:
+        print(f"No data found in {input_file}")
+        return
+
+    with open(output_file, "w", encoding="utf-8") as file:
+        file.write("<html><head><title>Checked Google Links</title></head><body>")
+
+        for entry in data:
+            if entry["checked"]:
+                continue
+
+
+            link = entry["link"]
+            title = entry["title"]
+            snippet = entry["snippet"]
+            print(f'{snippet} {link}')
+
+            try:
+                driver.get(link)
+                time.sleep(1)  # Wait to ensure the page loads
+                entry["checked"] = True
+                accessibility = "Accessible"
+            except Exception as e:
+                print(f"Failed to load {link}: {e}")
+                accessibility = "Not accessible"
+
+            file.write(f"<h2>{title}</h2>")
+            file.write(f"<p><a href='{link}'>{link}</a></p>")
+            file.write(f"<p>{snippet}</p>")
+            file.write(f"<p><strong>Accessibility:</strong> {accessibility}</p><br>")
+
+        file.write("</body></html>")
+
+    with open(input_file, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=4)
+
+    driver.quit()
+    print(f"Results saved to {output_file} and updated {input_file}")
+
+
+def prepare():
+    for country, info in countries_population.items():
+        links_count = country_link_count(country, "google_links.json")
+        if  links_count>= 10:
+            print(f"Skipping {country}: already has 10 or more links.")
+            continue
+        print(f'{country}')
+        google_query(f'VPS hosting in {country}', country, info['domain'], 10-links_count)
 
 if __name__ == "__main__":
-    for country in countries_population:
-        google_query(f'VPS hosting in {country}', countries_population[country]['domain'], 10)
+    check_links()
