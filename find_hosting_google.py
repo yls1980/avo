@@ -5,6 +5,14 @@ from webdriver_manager.chrome import ChromeDriverManager
 import time
 import random
 import json
+import re
+import requests
+from bs4 import BeautifulSoup
+from forex_python.converter import CurrencyRates
+from tld import get_tld
+import tld_to_country
+import psycopg2
+from psycopg2.extras import Json
 
 countries_population = {
     "China": {"population": 1402, "domain": ".cn"},
@@ -117,6 +125,185 @@ countries_population = {
     "El Salvador": {"population": 6, "domain": ".sv"},
     "Turkmenistan": {"population": 6, "domain": ".tm"}
 }
+GL_FILE = "/Users/avotech/PycharmProjects/mainTest/google_links.json"
+GRES_FILE = "/Users/avotech/PycharmProjects/mainTest/google_results.html"
+
+def upsert_results(connection, data):
+    try:
+        with connection.cursor() as cursor:
+            if 'id' in data and data['id'] is not None:
+                # Update existing record
+                cursor.execute("""
+                    UPDATE results
+                    SET title = %s, link = %s, snippet = %s, accessibility = %s, data = %s
+                    WHERE id = %s
+                    RETURNING id;
+                """, (
+                data['title'], data['link'], data['snippet'], data['accessibility'], Json(data['data']), data['id']))
+            else:
+                # Insert new record
+                cursor.execute("""
+                    INSERT INTO results (title, link, snippet, accessibility, data)
+                    VALUES (%s, %s, %s, %s, %s)
+                    RETURNING id;
+                """, (data['title'], data['link'], data['snippet'], data['accessibility'], Json(data['data'])))
+
+            # Commit the transaction
+            connection.commit()
+            # Return the ID of the inserted or updated row
+            return cursor.fetchone()[0]
+
+    except Exception as e:
+        connection.rollback()
+        print(f"Error occurred: {e}")
+        raise
+
+
+def upsert_results(data):
+
+    try:
+        connection = psycopg2.connect(
+            dbname="google_search",
+            user="zorro",
+            password="rjnjhsq1980",
+            host="localhost",
+            port=5432
+        )
+        with connection.cursor() as cursor:
+            if 'id' in data and data['id'] is not None:
+                # Update existing record
+                cursor.execute("""
+                    UPDATE results
+                    SET title = %s, link = %s, snippet = %s, accessibility = %s, data = %s
+                    WHERE id = %s
+                    RETURNING id;
+                """, (
+                data['title'], data['link'], data['snippet'], data['accessibility'], Json(data['data']), data['id']))
+            else:
+                cursor.execute("""
+                    INSERT INTO results (title, link, snippet, accessibility, data)
+                    VALUES (%s, %s, %s, %s, %s)
+                    RETURNING id;
+                """, (data['title'], data['link'], data['snippet'], data['accessibility'], Json(data['data'])))
+
+            connection.commit()
+            return cursor.fetchone()[0]
+
+    except Exception as e:
+        connection.rollback()
+        print(f"Error occurred: {e}")
+        raise
+
+class CurrencyConverter:
+    def __init__(self):
+        self.converter = CurrencyRates()
+        self.tld_mapping = tld_to_country.TLD_TO_COUNTRY
+        self.rate_cache = {}
+        self.cache_duration = 3600
+
+    def fetch_rates(self, from_currency):
+        url = f"https://open.er-api.com/v6/latest/{from_currency}"
+        response = requests.get(url)
+        if response.status_code == 200:
+            data = response.json()
+            if "rates" in data:
+                self.rate_cache[from_currency] = {
+                    "rates": data["rates"],
+                    "timestamp": time.time()
+                }
+                return data["rates"]
+        print(f"Error fetching rate: {response.json().get('error-type', 'Unknown error')}")
+        return None
+
+    def get_rates(self, from_currency):
+        if (from_currency in self.rate_cache and
+            time.time() - self.rate_cache[from_currency]["timestamp"] < self.cache_duration):
+            return self.rate_cache[from_currency]["rates"]
+        return self.fetch_rates(from_currency)
+
+    def convert_currency_public(self, amount, from_currency, to_currency):
+        rates = self.get_rates(from_currency)
+        if rates and to_currency in rates:
+            return amount * rates[to_currency]
+        print(f"Error: Conversion rate for {to_currency} not found.")
+        return None
+
+    def convert_to_rubles(self, amount, domain):
+        try:
+            tld = get_tld(domain, as_object=True).tld.split('.')[-1]
+            country_code = self.tld_mapping.get(tld, "Unknown").get("country_code", "Unknown")
+            country = self.tld_mapping.get(tld, "Unknown").get("country_name", "Unknown")
+            currency_code = self.tld_mapping.get(tld, "Unknown").get("currency_code", "Unknown")
+
+            ##print(f"Detected Country: {country}, Currency: {currency_code}")
+
+            convert_value = self.convert_currency_public(float(amount),currency_code,"RUB")
+            return country,  convert_value
+            #return self.converter.convert(currency_code, "RUB", float(amount))
+        except Exception as e:
+            print(f"Error converting currency: {e}")
+            return None
+
+
+class WebScraper:
+    """
+    Handles web scraping, data extraction, and processing.
+    """
+    def __init__(self, url):
+        self.url = url
+        self.currency_converter = CurrencyConverter()
+        self.currency_symbols = r'[₹$€₽£¥₴₦₨฿₱₪₡₭₮₩₫₲₺₼₸₾₤₳₥₧₢₠₰₯]'
+        self.price_pattern = rf'({self.currency_symbols})\s?(\d{{1,3}}(?:,\d{{3}})*(?:\.\d{{2}})?)'
+        self.hardware_pattern = r'\b(?:\d+MB|\d+GB|\d+TB|\d+ CORE|\d+-CORE|\d+ Processor Cores|RAM)\b'
+
+    def fetch_webpage(self):
+        """Fetches webpage content using requests."""
+        try:
+            response = requests.get(self.url, timeout=10)
+            response.raise_for_status()
+            return response.text
+        except requests.exceptions.RequestException as e:
+            print(f"Error fetching URL: {e}")
+            return ""
+
+    def extract_info(self, html_content):
+        soup = BeautifulSoup(html_content, 'html.parser')
+        text = soup.get_text(separator=" ")
+
+        prices = re.findall(self.price_pattern, text)
+        hardware_specs = re.findall(self.hardware_pattern, text)
+
+        processed_prices = []
+        for symbol, amount in prices:
+            try:
+                amount = amount.replace(",", "")
+                country, converted_price = self.currency_converter.convert_to_rubles(amount, self.url)
+                processed_prices.append({
+                    "original": f"{symbol}{amount}",
+                    "in_rubles": f"{converted_price:.2f} ₽" if converted_price else "Conversion Error",
+                    "country": country
+                })
+            except Exception as e:
+                print(f"Error processing price {symbol}{amount}: {e}")
+                processed_prices.append({
+                    "original": f"{symbol}{amount}",
+                    "in_rubles": f"Conversion Error{str(e)}",
+                    "country": country
+                })
+
+        return {"prices": processed_prices, "hardware_specs": hardware_specs}
+
+    def save_to_json(self, data, filename="prices_and_specs.json"):
+        with open(filename, "w", encoding="utf-8") as json_file:
+            json.dump(data, json_file, indent=4, ensure_ascii=False)
+
+    def print_results(self, extracted_info):
+        """Prints the extracted results."""
+        print("\nPrices (with conversion to ₽):")
+        for price in extracted_info["prices"]:
+            print(f"Original: {price['original']}, In RUB: {price['in_rubles']}")
+        print("\nHardware Specifications:")
+        print(extracted_info["hardware_specs"])
 
 
 def duckduckgo_query(query, domain, max_results):
@@ -193,7 +380,7 @@ def initialize_driver():
     ]))
     return webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
 
-def country_link_count(country, output_file="google_links.json"):
+def country_link_count(country, output_file=GL_FILE):
     try:
         with open(output_file, "r", encoding="utf-8") as f:
             data = json.load(f)
@@ -202,7 +389,7 @@ def country_link_count(country, output_file="google_links.json"):
         return 0
 
 
-def google_query(query, country, domain, max_results, output_file="google_links.json"):
+def google_query(query, country, domain, max_results, output_file=GL_FILE):
     full_query = f"{query} site:{domain}"
     url = f"https://www.google.com/search?q={full_query}"
 
@@ -254,9 +441,8 @@ def google_query(query, country, domain, max_results, output_file="google_links.
     print(f"Appended {len(new_data)} new links to {output_file}")
 
 
-def check_links(input_file="google_links.json", output_file="google_results.html"):
-    driver = initialize_driver()
-
+def check_links(input_file=GL_FILE, output_file=GRES_FILE):
+    #driver = initialize_driver()
     try:
         with open(input_file, "r", encoding="utf-8") as f:
             data = json.load(f)
@@ -270,18 +456,20 @@ def check_links(input_file="google_links.json", output_file="google_results.html
         for entry in data:
             if entry["checked"]:
                 continue
-
-
             link = entry["link"]
             title = entry["title"]
             snippet = entry["snippet"]
             print(f'{snippet} {link}')
-
+            price_data = json.dumps('{}')
             try:
-                driver.get(link)
-                time.sleep(1)  # Wait to ensure the page loads
-                entry["checked"] = True
-                accessibility = "Accessible"
+                response = requests.get(link, timeout=10)
+                if response.status_code == 200:
+                    time.sleep(1)  # Wait to ensure the page loads
+                    entry["checked"] = True
+                    accessibility = "Accessible"
+                    price_data = get_data(link)
+                else:
+                    accessibility = "Not accessible"
             except Exception as e:
                 print(f"Failed to load {link}: {e}")
                 accessibility = "Not accessible"
@@ -290,24 +478,46 @@ def check_links(input_file="google_links.json", output_file="google_results.html
             file.write(f"<p><a href='{link}'>{link}</a></p>")
             file.write(f"<p>{snippet}</p>")
             file.write(f"<p><strong>Accessibility:</strong> {accessibility}</p><br>")
-
+            new_data = {
+                "title": title,
+                "link": link,
+                "snippet": snippet,
+                "accessibility": accessibility,
+                "data": price_data
+            }
+            upsert_results(new_data)
         file.write("</body></html>")
 
     with open(input_file, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=4)
 
-    driver.quit()
+    #driver.quit()
     print(f"Results saved to {output_file} and updated {input_file}")
 
 
 def prepare():
     for country, info in countries_population.items():
-        links_count = country_link_count(country, "google_links.json")
+        links_count = country_link_count(country, GL_FILE)
         if  links_count>= 10:
             print(f"Skipping {country}: already has 10 or more links.")
             continue
         print(f'{country}')
         google_query(f'VPS hosting in {country}', country, info['domain'], 10-links_count)
+
+def get_data(target_url):
+    #target_url = "https://www.nameregistry.org.cn/index-11.html"
+    scraper = WebScraper(target_url)
+
+    # Fetch and process webpage data
+    html_content = scraper.fetch_webpage()
+    if html_content:
+        extracted_data = scraper.extract_info(html_content)
+
+        scraper.save_to_json({"extracted_info": extracted_data})
+        scraper.print_results(extracted_data)
+        return extracted_data
+    else:
+        return json.dumps('{}')
 
 if __name__ == "__main__":
     check_links()

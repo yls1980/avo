@@ -3,7 +3,7 @@ import itertools
 import paramiko
 import psycopg2
 from psycopg2 import sql
-from secr import pss  # Предположительно это ваш модуль для пароля
+from secr import pss  
 
 import multiprocessing
 from multiprocessing import Pool

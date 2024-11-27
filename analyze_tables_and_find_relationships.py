@@ -71,6 +71,8 @@ def analyze_tables_and_find_relationships(conn):
             AND pg_exttable.reloid IS NULL  
            -- and pg_tables.tablename= 'ln_loan_guar_desc_m' and pg_tables.schemaname = 'ext__fido'
             and columns.column_name not in ('dwh_job_id', 'dwh_created_at')
+            AND data_type NOT IN ('jsonb', 'ARRAY', 'json', 'date', 'timestamp', 'timestamp with time zone', 'timestamp without time zone')
+            and pg_tables.schemaname not like 'stg_%'
             """
             start_time = time.time()
             cur.execute(find_columns_query)
@@ -112,10 +114,11 @@ def analyze_tables_and_find_relationships(conn):
                     # Check for matching relationship
                     relationship_query = sql.SQL("""
                     SELECT COUNT(*) > 0
-                    FROM {schema1}.{table1} t1
-                    JOIN {schema2}.{table2} t2
+                    FROM (select * from {schema1}.{table1} where {column1} is not null order by {column1} limit 1000) t1
+                    JOIN (select * from {schema2}.{table2} where {column2} is not null order by {column2} limit 1000) t2
                     ON md5(COALESCE(t1.{column1}::text, '')) = md5(COALESCE(t2.{column2}::text, ''))
-                    LIMIT 1
+                    where length(t1.{column1}::text)>10
+                    and length(t2.{column2}::text)>10
                     """).format(
                         schema1=sql.Identifier(schema1),
                         table1=sql.Identifier(table1),
