@@ -63,6 +63,7 @@ def analyze_tables_and_find_relationships(conn):
             WHERE pg_tables.schemaname NOT IN ('pg_catalog', 'information_schema')
             AND pg_tables.schemaname NOT LIKE 'pg_toast%'
             AND pg_tables.schemaname NOT LIKE 'pg_temp%'
+            AND pg_tables.schemaname NOT LIKE 'temp%'
             AND pg_tables.tablename NOT LIKE '%_prt_%'  
             AND pg_tables.tablename NOT LIKE '%_tmp'
             AND pg_tables.tablename NOT LIKE '%tmp_'
