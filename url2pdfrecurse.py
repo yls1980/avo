@@ -214,6 +214,7 @@ class PDFCrawler:
 
 
 if __name__ == "__main__":
-    start_url = "https://docs.vmware.com/en/VMware-Greenplum/6/greenplum-database/landing-index.html"
+    #start_url = "https://docs.vmware.com/en/VMware-Greenplum/6/greenplum-database/landing-index.html"
+    start_url = "https://automate-dv.readthedocs.io/en/latest/"
     crawler = PDFCrawler()
     crawler.run(start_url)

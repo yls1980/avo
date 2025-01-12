@@ -2,10 +2,11 @@ import base64
 import hashlib
 import json
 import os
+import random
 import tempfile
 
-import fitz
-import pdfkit
+import pdfplumber
+#import pdfkit
 from selenium import webdriver
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.chrome.service import Service
@@ -45,50 +46,65 @@ def generate_file_name(url, depth, file_extension):
     return f"depth_{depth}_{url_hash}{file_extension}"
 def wait_for_page_load(driver):
     # Ждем, пока document.readyState не станет 'complete'
-    WebDriverWait(driver, 20).until(
+    WebDriverWait(driver, 2).until(
         lambda d: d.execute_script("return document.readyState") == "complete"
     )
     print("Страница загружена.")
+
+
+
+import pdfplumber
+
 def pdf_to_html_with_links(pdf_path):
+    """Convert a PDF file to HTML with links using pdfplumber."""
     try:
-        # Open the PDF file
-        pdf_document = fitz.open(pdf_path)
         html_content = ""
 
-        # Loop through each page
-        for page_num in range(pdf_document.page_count):
-            page = pdf_document.load_page(page_num)
-            text = page.get_text("html")  # Extract text as HTML
-            links = page.get_links()  # Extract all links (list of dictionaries)
+        # Open the PDF file with pdfplumber
+        with pdfplumber.open(pdf_path) as pdf:
+            for page in pdf.pages:
+                # Extract plain text from the page
+                text = page.extract_text()
 
-            # Modify HTML text to add hyperlinks
-            for link in links:
-                if 'uri' in link:
-                    # Get the coordinates of the link area
-                    x0, y0, x1, y1 = link['from']  # top-left and bottom-right coordinates
-                    link_uri = link['uri']
+                # Extract annotations (links, if available)
+                annotations = page.annots or []
 
-                    # You can either try to locate the exact text associated with the link (requires more logic)
-                    # or place an HTML anchor (<a>) tag around a region of text in the area.
-                    # For simplicity, we append the link at the end of the page.
-                    text += f'<a href="{link_uri}">Link</a><BR>'
+                # Wrap text in HTML and add links
+                page_html = "<div>"
+                if text:
+                    page_html += "<p>" + text.replace("\n", "<br>") + "</p>"
+                for annot in annotations:
+                    uri = annot.get("uri", None)
+                    if uri:
+                        page_html += f'<a href="{uri}">Link</a><br>'
+                page_html += "</div>"
 
-            html_content += text
+                html_content += page_html
+
         return html_content
     except Exception as e:
         print(f"Error converting PDF to HTML: {e}")
         return None
 
+
+
 def accept_cookies(driver):
     try:
         # Wait until the "Accept Cookies" button is present and clickable
-        accept_button = WebDriverWait(driver, 10).until(
+        accept_button = WebDriverWait(driver, 2).until(
             EC.element_to_be_clickable((By.XPATH, "//button[text()='Accept Cookies']"))  # Adjust the XPath as necessary
         )
         accept_button.click()
         print("Cookies accepted.")
     except Exception as e:
         print(f"Could not find or click the 'Accept Cookies' button: {e}")
+
+from selenium import webdriver
+from selenium.webdriver.chrome.service import Service
+from selenium.webdriver.chrome.options import Options
+import tempfile
+import base64
+import time
 
 def fetch_html_with_selenium(url):
     """Fetch the fully rendered HTML content from a URL using Selenium."""
@@ -98,37 +114,31 @@ def fetch_html_with_selenium(url):
     chrome_options.add_argument("--disable-dev-shm-usage")
     chrome_options.add_argument("--ignore-certificate-errors")
     chrome_options.add_argument("--disable-extensions")
+    chrome_options.add_argument("user-agent=" + random.choice([
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.5845.111 Safari/537.36",
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.5735.134 Safari/537.36",
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:89.0) Gecko/20100101 Firefox/89.0",
+        "Mozilla/5.0 (iPhone; CPU iPhone OS 14_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.0 Mobile/15E148 Safari/604.1"
+    ]))
     chrome_options.add_argument("test-type")
     prefs = {
-        "download.default_directory": r'c:\Users\iskorkin\PycharmProjects\mainTest',
+        "download.default_directory": "/Users/iskorkin/PycharmProjects/mainTest",
         "download.prompt_for_download": False,
         "download.directory_upgrade": True,
         "safebrowsing.enabled": True
     }
     chrome_options.add_experimental_option("prefs", prefs)
-    chrome_options.add_argument('--kiosk-printing')
+    chrome_options.add_argument("--kiosk-printing")
 
     # Set up the WebDriver
-    chromedriver_path=r'c:\Users\iskorkin\0\chromedriver-win64\chromedriver.exe'
-    service = Service(chromedriver_path)
-    driver = webdriver.Chrome(service=service, options=chrome_options)
+    driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=chrome_options)
 
     try:
         driver.get(url)
-        #driver.implicitly_wait(20)
         wait_for_page_load(driver)
         accept_cookies(driver)
         wait_for_page_load(driver)
-        # filename = 'tmp_file.pdf'
-        # js_code = f'''
-        #         var element = document.createElement('a');
-        #         element.setAttribute('href', 'data:text/html;charset=utf-8,' + encodeURIComponent(document.documentElement.outerHTML));
-        #         element.setAttribute('download', '{filename}');
-        #         document.body.appendChild(element);
-        #         element.click();
-        #         document.body.removeChild(element);
-        #         '''
-        #driver.execute_script(js_code)
+
         print_options = {
             'paperWidth': 8.27,  # A4 size width in inches
             'paperHeight': 11.69,  # A4 size height in inches
@@ -141,13 +151,10 @@ def fetch_html_with_selenium(url):
         }
         result = driver.execute_cdp_cmd("Page.printToPDF", print_options)
         time.sleep(DELAY)
-        # Save the PDF data to a file
-        # with open(filename, 'wb') as file:
-        #     file.write(base64.b64decode(result['data']))
+
         try:
             pdf_filename = generate_file_name(start_url, url, ".pdf")
             with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf", mode='wb') as temp_file:
-                # Write the PDF data to the temporary file in binary mode
                 temp_file.write(base64.b64decode(result['data']))
                 temp_file_path = temp_file.name
                 print(f"Page saved as PDF: {temp_file_path}")
@@ -156,7 +163,6 @@ def fetch_html_with_selenium(url):
         except Exception as e:
             print(f"Error saving PDF: {e}")
 
-        #html_content = driver.page_source
         with open('tmp_file.html', 'w', encoding='utf-8') as file:
             file.write(html_content)
         return html_content
@@ -165,6 +171,7 @@ def fetch_html_with_selenium(url):
         return None
     finally:
         driver.quit()
+
 
 
 def extract_internal_links(base_url, html):
@@ -217,6 +224,7 @@ def merge_pdfs(pdf_files, output_filename):
 
 
 # Example usage
-start_url = "https://docs.vmware.com/en/VMware-Greenplum/6/greenplum-database/landing-index.html"
+#start_url = "https://docs.vmware.com/en/VMware-Greenplum/6/greenplum-database/landing-index.html"
+start_url = "https://automate-dv.readthedocs.io/en/latest/"
 crawl_website(start_url)
 merge_pdfs(pdf_files, "combined_content.pdf")
